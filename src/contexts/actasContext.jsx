@@ -4,9 +4,10 @@ import {
   getActaRequest,
   createNewActaRequest,
   deleteActaRequest,
-  updateActaRequest
+  updateActaRequest,
 } from "../api/actasApi.js";
 import { getUsersRequest } from "../api/authUserApi.js"; // Nueva importación
+import { useAuthUser } from "./authUserContext"; // Nueva importación
 
 export const ActasContext = createContext();
 
@@ -20,14 +21,15 @@ export const useActas = () => {
 
 export const ActasProvider = ({ children }) => {
   const [actas, setActas] = useState([]);
-  const [registeredUsers, setRegisteredUsers] = useState([]); // Lista de usuarios reales
+  const [registeredUsers, setRegisteredUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const { token, authUser } = useAuthUser(); // Obtenemos el token del contexto de autenticación
 
-  // Cargar usuarios registrados al iniciar
-  const loadRegisteredUsers = async () => {
+  // Cargar usuarios registrados
+  const loadRegisteredUsers = async (token) => {
     try {
-      const response = await getUsersRequest();
+      const response = await getUsersRequest(token);
       setRegisteredUsers(response.data);
     } catch (error) {
       console.error("Error loading users:", error);
@@ -35,39 +37,48 @@ export const ActasProvider = ({ children }) => {
     }
   };
 
-  // Cargar actas y usuarios al montar el provider
-  useEffect(() => {
-    const initializeData = async () => {
-      setLoading(true);
-      try {
-        await Promise.all([getActas(), loadRegisteredUsers()]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    initializeData();
-  }, []);
-
+  // Cargar actas
   const getActas = async () => {
     try {
-      const response = await getActasRequest();
+      setLoading(true);
+      const response = await getActasRequest(token);
       setActas(response.data);
     } catch (error) {
       console.error(error);
       setError("Error al cargar actas");
+    } finally {
+      setLoading(false);
     }
   };
 
+  // Cargar datos iniciales cuando hay usuario autenticado
+  useEffect(() => {
+    if (token) {
+      const initializeData = async () => {
+        setLoading(true);
+        try {
+          await Promise.all([getActas(token), loadRegisteredUsers(token)]);
+        } finally {
+          setLoading(false);
+        }
+      };
+      initializeData();
+    }
+  }, [token]); // Se ejecuta cuando cambia authUser
+
+  // Modificar las demás funciones para incluir el token
   const createNewActa = async (actaData) => {
     try {
       setLoading(true);
-      const response = await createNewActaRequest(actaData);
+      const response = await createNewActaRequest({
+        ...actaData,
+        responsable: authUser.id, // Se Agrega el ID del usuario logueado
+      });
       setActas([...actas, response.data]);
-      return response.data; // Retorna la acta creada
+      return response.data;
     } catch (error) {
-      console.error(error);
-      setError("Error al crear acta");
-      throw error; // Permite manejar el error en el componente
+      console.error("Error creating acta:", error);
+      throw error; // Esto permite manejar el error en el componente
     } finally {
       setLoading(false);
     }
@@ -77,7 +88,7 @@ export const ActasProvider = ({ children }) => {
     try {
       setLoading(true);
       const response = await updateActaRequest(id, actaData);
-      setActas(actas.map(acta => acta._id === id ? response.data : acta));
+      setActas(actas.map((acta) => (acta.id === id ? response.data : acta)));
       return response.data;
     } catch (error) {
       console.error(error);
@@ -92,7 +103,7 @@ export const ActasProvider = ({ children }) => {
     try {
       setLoading(true);
       await deleteActaRequest(id);
-      setActas(actas.filter(acta => acta._id !== id));
+      setActas(actas.filter((acta) => acta.id !== id));
     } catch (error) {
       console.error(error);
       setError("Error al eliminar acta");
@@ -124,11 +135,12 @@ export const ActasProvider = ({ children }) => {
         loading,
         error,
         getActas,
-        getActa,
+        getActa: (id) => getActaRequest(id, token),
         createNewActa,
-        updateActa,
-        deleteActa,
-        loadRegisteredUsers
+        updateActa: (id, actaData) =>
+          updateActaRequest(id, actaData,token),
+        deleteActa: (id) => deleteActaRequest(id, token),
+        loadRegisteredUsers: () => loadRegisteredUsers(token),
       }}
     >
       {children}
